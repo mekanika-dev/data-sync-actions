@@ -110,13 +110,7 @@ def list_files(service, folder_id, file_types=None, recursive=True):
                         # Vérifier l'extension
                         file_ext = Path(item['name']).suffix.lower().replace('.', '')
                         
-                        # Vérifier aussi les Google Docs qui seront exportés en PDF
-                        is_google_doc_to_pdf = (
-                            'pdf' in file_types and 
-                            item['mimeType'] == 'application/vnd.google-apps.document'
-                        )
-                        
-                        if file_ext in file_types or is_google_doc_to_pdf:
+                        if file_ext in file_types:
                             all_files.append(item)
                         elif item['mimeType'] == f'application/{file_ext}':
                             all_files.append(item)
@@ -148,17 +142,8 @@ def download_file(service, file_info, output_dir, preserve_structure=True):
     output_path = output_dir / file_name
     
     try:
-        # Google Docs -> export en PDF
-        if mime_type == 'application/vnd.google-apps.document':
-            request = service.files().export_media(
-                fileId=file_id,
-                mimeType='application/pdf'
-            )
-            output_path = output_path.with_suffix('.pdf')
-        # Fichier normal
-        else:
-            request = service.files().get_media(fileId=file_id)
-        
+        request = service.files().get_media(fileId=file_id)
+
         # Télécharger
         fh = io.BytesIO()
         downloader = MediaIoBaseDownload(fh, request)
