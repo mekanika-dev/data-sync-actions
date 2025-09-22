@@ -1,0 +1,30 @@
+name: "Google Drive Sync"
+description: "Synchronise les fichiers depuis Google Drive"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.10"
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
+
+    - name: Download sync script
+      shell: bash
+      run: |
+        curl -o sync_drive.py https://raw.githubusercontent.com/mekanika-dev/data-sync-actions/main/google-drive/sync.py
+
+    - name: Run sync
+      shell: bash
+      env:
+        GOOGLE_CREDENTIALS: ${{ env.GOOGLE_DRIVE_CREDENTIALS }}
+        DRIVE_FOLDER_ID: ${{ env.DRIVE_DOCS_FOLDER_ID }}
+      run: |
+        echo "$GOOGLE_CREDENTIALS" > credentials.json
+        python sync_drive.py
+        rm -f credentials.json
