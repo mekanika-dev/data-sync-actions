@@ -7,6 +7,7 @@ Supporte les sous-dossiers et le filtrage par type de fichier
 import os
 import json
 import io
+import glob
 from pathlib import Path
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -126,7 +127,7 @@ def list_files(service, folder_id, file_types=None, recursive=True):
     return all_files
 
 def download_file(service, file_info, output_dir, preserve_structure=True):
-    """Télécharge un fichier"""
+    """Télécharge un fichier et remplace les fichiers existants avec le même préfixe (5 premiers caractères)"""
     file_id = file_info['id']
     file_name = file_info['name']
     mime_type = file_info.get('mimeType', '')
@@ -138,8 +139,18 @@ def download_file(service, file_info, output_dir, preserve_structure=True):
         output_dir = output_dir / relative_path
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Chemin de sortie
-    output_path = output_dir / file_name
+    # Chercher un fichier existant avec le même préfixe
+    existing_file = find_existing_file_by_prefix(output_dir.parent if preserve_structure and relative_path else output_dir, 
+                                                file_name, preserve_structure, relative_path)
+    
+    # Chemin de sortie (utiliser le nom du fichier existant si trouvé, sinon le nouveau nom)
+    if existing_file:
+        output_path = existing_file
+        action = "🔄 Remplacé"
+        print(f"🔍 Fichier avec préfixe identique trouvé: {existing_file.name} -> sera remplacé par {file_name}")
+    else:
+        output_path = output_dir / file_name
+        action = "✅ Nouveau"
     
     try:
         request = service.files().get_media(fileId=file_id)
@@ -158,10 +169,12 @@ def download_file(service, file_info, output_dir, preserve_structure=True):
             f.write(fh.read())
         
         if relative_path:
-            print(f"✅ {relative_path}/{output_path.name}")
+            print(f"{action} {relative_path}/{output_path.name}")
         else:
-            print(f"✅ {output_path.name}")
-        return True
+            print(f"{action} {output_path.name}")
+        
+        # Retourner le chemin final pour la mise à jour des métadonnées
+        return str(output_path.relative_to(output_dir.parent if preserve_structure and relative_path else output_dir.parent))
         
     except Exception as e:
         print(f"❌ Erreur avec {file_name}: {e}")
@@ -181,6 +194,44 @@ def save_metadata(metadata, target_path):
     metadata_file.parent.mkdir(exist_ok=True)
     with open(metadata_file, 'w') as f:
         json.dump(metadata, f, indent=2)
+
+def find_existing_file_by_prefix(output_dir, file_name, preserve_structure=True, relative_path=''):
+    """
+    Trouve un fichier existant avec les 5 premiers caractères identiques
+    
+    Args:
+        output_dir: Dossier de destination
+        file_name: Nom du nouveau fichier
+        preserve_structure: Si True, respecte la structure des dossiers
+        relative_path: Chemin relatif pour la structure
+    
+    Returns:
+        Path du fichier existant ou None si pas trouvé
+    """
+    # Déterminer le dossier de recherche
+    search_dir = Path(output_dir)
+    if preserve_structure and relative_path:
+        search_dir = search_dir / relative_path
+    
+    if not search_dir.exists():
+        return None
+    
+    # Extraire les 5 premiers caractères (sans l'extension)
+    file_stem = Path(file_name).stem
+    if len(file_stem) < 5:
+        return None
+    
+    prefix = file_stem[:5]
+    file_ext = Path(file_name).suffix
+    
+    # Chercher les fichiers avec le même préfixe et extension
+    pattern = f"{prefix}*{file_ext}"
+    search_pattern = search_dir / pattern
+    
+    matching_files = list(search_dir.glob(pattern))
+    
+    # Retourner le premier fichier trouvé (il devrait y en avoir au maximum un)
+    return matching_files[0] if matching_files else None
 
 def main():
     # Configuration depuis les variables d'environnement
@@ -231,28 +282,46 @@ def main():
         file_name = file_info['name']
         relative_path = file_info.get('relative_path', '')
         
-        # Clé unique pour le fichier
+        # Chercher si un fichier avec le même préfixe existe déjà
+        output_dir = Path(target_path)
         if relative_path:
-            file_key = f"{relative_path}/{file_name}"
-        else:
-            file_key = file_name
+            output_dir = output_dir / relative_path
         
-        # Vérifier si mise à jour nécessaire
-        if file_key in metadata['files']:
+        existing_file = find_existing_file_by_prefix(target_path, file_name, preserve_structure=True, relative_path=relative_path)
+        
+        # Déterminer la clé pour les métadonnées
+        if existing_file:
+            # Utiliser le nom du fichier existant pour la clé
+            existing_relative_path = str(existing_file.parent.relative_to(Path(target_path))) if existing_file.parent != Path(target_path) else ''
+            if existing_relative_path and existing_relative_path != '.':
+                file_key = f"{existing_relative_path}/{existing_file.name}"
+            else:
+                file_key = existing_file.name
+        else:
+            # Nouveau fichier, utiliser le nom du fichier Drive
+            if relative_path:
+                file_key = f"{relative_path}/{file_name}"
+            else:
+                file_key = file_name
+        
+        # Vérifier si mise à jour nécessaire (seulement si pas de remplacement de préfixe)
+        if not existing_file and file_key in metadata['files']:
             if metadata['files'][file_key].get('md5') == file_info.get('md5Checksum'):
                 print(f"✓ À jour: {file_key}")
                 skipped += 1
                 continue
         
         # Télécharger
-        if download_file(service, file_info, target_path, preserve_structure=True):
+        result = download_file(service, file_info, target_path, preserve_structure=True)
+        if result:
             synced += 1
-            # Mettre à jour les métadonnées
+            # Mettre à jour les métadonnées avec la clé appropriée
             metadata['files'][file_key] = {
                 'id': file_info['id'],
                 'md5': file_info.get('md5Checksum'),
                 'modified': file_info.get('modifiedTime'),
-                'size': file_info.get('size')
+                'size': file_info.get('size'),
+                'original_name': file_name  # Garder trace du nom original
             }
     
     # Sauvegarder les métadonnées
