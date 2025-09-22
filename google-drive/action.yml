@@ -1,5 +1,5 @@
 name: "Google Drive Sync"
-description: "Synchronise les fichiers depuis Google Drive"
+description: "Synchronise les fichiers depuis Google Drive avec support des sous-dossiers et filtrage"
 
 runs:
   using: "composite"
@@ -23,7 +23,10 @@ runs:
       shell: bash
       env:
         GOOGLE_CREDENTIALS: ${{ env.GOOGLE_DRIVE_CREDENTIALS }}
-        DRIVE_FOLDER_ID: ${{ env.DRIVE_DOCS_FOLDER_ID }}
+        DRIVE_DOCS_FOLDER_ID: ${{ env.DRIVE_DOCS_FOLDER_ID }}
+        SUBFOLDER_NAME: ${{ env.SUBFOLDER_NAME }}
+        TARGET_PATH: ${{ env.TARGET_PATH }}
+        FILE_TYPES: ${{ env.FILE_TYPES }}
       run: |
         echo "$GOOGLE_CREDENTIALS" > credentials.json
         python sync_drive.py
