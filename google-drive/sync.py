@@ -143,14 +143,19 @@ def download_file(service, file_info, output_dir, preserve_structure=True):
     existing_file = find_existing_file_by_prefix(output_dir.parent if preserve_structure and relative_path else output_dir, 
                                                 file_name, preserve_structure, relative_path)
     
-    # Chemin de sortie (utiliser le nom du fichier existant si trouvé, sinon le nouveau nom)
+    # Déterminer le chemin de sortie et l'action
     if existing_file:
-        output_path = existing_file
+        # Supprimer l'ancien fichier et créer le nouveau avec le nom actuel
+        old_name = existing_file.name
+        existing_file.unlink()  # Supprimer l'ancien fichier
+        output_path = output_dir / file_name  # Utiliser le nouveau nom
         action = "🔄 Remplacé"
-        print(f"🔍 Fichier avec préfixe identique trouvé: {existing_file.name} -> sera remplacé par {file_name}")
+        print(f"🔍 Fichier avec préfixe identique trouvé: {old_name} -> remplacé par {file_name}")
+        replacement_info = {'old_file': existing_file, 'old_name': old_name}
     else:
         output_path = output_dir / file_name
         action = "✅ Nouveau"
+        replacement_info = None
     
     try:
         request = service.files().get_media(fileId=file_id)
@@ -173,8 +178,12 @@ def download_file(service, file_info, output_dir, preserve_structure=True):
         else:
             print(f"{action} {output_path.name}")
         
-        # Retourner le chemin final pour la mise à jour des métadonnées
-        return str(output_path.relative_to(output_dir.parent if preserve_structure and relative_path else output_dir.parent))
+        # Retourner les informations pour la mise à jour des métadonnées
+        return {
+            'success': True,
+            'file_path': str(output_path.relative_to(output_dir.parent if preserve_structure and relative_path else output_dir.parent)),
+            'replacement_info': replacement_info
+        }
         
     except Exception as e:
         print(f"❌ Erreur avec {file_name}: {e}")
@@ -301,7 +310,7 @@ def main():
             
             # Même nom mais contenu différent - télécharger pour remplacer
             result = download_file(service, file_info, target_path, preserve_structure=True)
-            if result:
+            if result and result['success']:
                 synced += 1
                 metadata['files'][file_key] = {
                     'id': file_info['id'],
@@ -318,16 +327,23 @@ def main():
         if existing_file:
             # Fichier avec préfixe identique trouvé - remplacer
             result = download_file(service, file_info, target_path, preserve_structure=True)
-            if result:
+            if result and result['success']:
                 synced += 1
-                # Utiliser la clé du fichier existant pour les métadonnées
-                existing_relative_path = str(existing_file.parent.relative_to(Path(target_path))) if existing_file.parent != Path(target_path) else ''
-                if existing_relative_path and existing_relative_path != '.':
-                    existing_file_key = f"{existing_relative_path}/{existing_file.name}"
-                else:
-                    existing_file_key = existing_file.name
                 
-                metadata['files'][existing_file_key] = {
+                # Supprimer l'ancienne entrée des métadonnées
+                old_file_path = result['replacement_info']['old_file']
+                old_relative_path = str(old_file_path.parent.relative_to(Path(target_path))) if old_file_path.parent != Path(target_path) else ''
+                if old_relative_path and old_relative_path != '.':
+                    old_file_key = f"{old_relative_path}/{result['replacement_info']['old_name']}"
+                else:
+                    old_file_key = result['replacement_info']['old_name']
+                
+                # Supprimer l'ancienne entrée
+                if old_file_key in metadata['files']:
+                    del metadata['files'][old_file_key]
+                
+                # Ajouter la nouvelle entrée avec le nouveau nom de fichier
+                metadata['files'][file_key] = {
                     'id': file_info['id'],
                     'md5': file_info.get('md5Checksum'),
                     'modified': file_info.get('modifiedTime'),
@@ -344,7 +360,7 @@ def main():
             
             # Télécharger le nouveau fichier
             result = download_file(service, file_info, target_path, preserve_structure=True)
-            if result:
+            if result and result['success']:
                 synced += 1
                 metadata['files'][file_key] = {
                     'id': file_info['id'],
