@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BOM Viewer - Mekanika</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Raleway:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            font-family: 'Raleway', sans-serif;
+        }
+        .highlight {
+            background-color: #e0f8f9 !important;
+        }
+        .table-container {
+            transition: all 0.3s ease;
+        }
+        .collapsed {
+            max-height: 60px;
+            overflow: hidden;
+        }
+        .level-indent-1 { padding-left: 1rem; }
+        .level-indent-2 { padding-left: 2rem; }
+        .level-indent-3 { padding-left: 3rem; }
+        .level-indent-4 { padding-left: 4rem; }
+        .level-indent-5 { padding-left: 5rem; }
+
+        /* Custom cyan blue theme */
+        .bg-cyan-primary { background-color: #00B4BE; }
+        .bg-cyan-light { background-color: #e0f8f9; }
+        .bg-cyan-lighter { background-color: #f0fcfd; }
+        .text-cyan-primary { color: #00B4BE; }
+        .text-cyan-dark { color: #008a92; }
+        .border-cyan { border-color: #00B4BE; }
+        .hover-cyan:hover { background-color: #e0f8f9; }
+        .focus-cyan:focus { border-color: #00B4BE; box-shadow: 0 0 0 3px rgba(0, 180, 190, 0.1); }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <div class="container mx-auto px-4 py-8 max-w-7xl">
+        <!-- Header -->
+        <div class="bg-white rounded-lg shadow-sm p-6 mb-6">
+            <h1 class="text-3xl font-bold text-gray-800 mb-4">BOM Structure Viewer</h1>
+
+            <!-- File Input -->
+            <div class="mb-6">
+                <label for="csvFile" class="block text-sm font-medium text-gray-700 mb-2">
+                    Select CSV File
+                </label>
+                <input
+                    type="file"
+                    id="csvFile"
+                    accept=".csv"
+                    class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-cyan-light file:text-cyan-dark hover:file:bg-cyan-lighter"
+                >
+            </div>
+
+            <!-- Controls -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <!-- Global Search -->
+                <div>
+                    <label for="globalSearch" class="block text-sm font-medium text-gray-700 mb-1">
+                        Global Search
+                    </label>
+                    <input
+                        type="text"
+                        id="globalSearch"
+                        placeholder="Search all fields..."
+                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus-cyan"
+                    >
+                </div>
+
+                <!-- Reference Filter -->
+                <div>
+                    <label for="referenceFilter" class="block text-sm font-medium text-gray-700 mb-1">
+                        Filter by Reference
+                    </label>
+                    <input
+                        type="text"
+                        id="referenceFilter"
+                        placeholder="e.g., M00..."
+                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus-cyan"
+                    >
+                </div>
+
+                <!-- Level Filter -->
+                <div>
+                    <label for="levelFilter" class="block text-sm font-medium text-gray-700 mb-1">
+                        Filter by Level
+                    </label>
+                    <select
+                        id="levelFilter"
+                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus-cyan"
+                    >
+                        <option value="">All Levels</option>
+                        <option value="0">Level 0 - Main Product</option>
+                        <option value="1">Level 1</option>
+                        <option value="2">Level 2</option>
+                        <option value="3">Level 3</option>
+                        <option value="4">Level 4</option>
+                        <option value="5">Level 5+</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="mt-4 flex gap-2">
+                <button
+                    id="clearFilters"
+                    class="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-all duration-200 ease-in-out transform hover:scale-105"
+                >
+                    Clear Filters
+                </button>
+                <button
+                    id="expandAll"
+                    class="px-4 py-2 bg-cyan-light text-cyan-dark rounded-md hover:bg-cyan-lighter transition-all duration-200 ease-in-out transform hover:scale-105"
+                >
+                    Expand All
+                </button>
+                <button
+                    id="collapseAll"
+                    class="px-4 py-2 bg-cyan-light text-cyan-dark rounded-md hover:bg-cyan-lighter transition-all duration-200 ease-in-out transform hover:scale-105"
+                >
+                    Collapse All
+                </button>
+                <button
+                    id="exportFiltered"
+                    class="px-4 py-2 bg-green-100 text-green-700 rounded-md hover:bg-green-200 transition-all duration-200 ease-in-out transform hover:scale-105"
+                >
+                    Export Filtered Data
+                </button>
+            </div>
+
+            <!-- Statistics -->
+            <div id="statistics" class="mt-4 p-4 bg-cyan-lighter rounded-md hidden">
+                <div class="text-sm">
+                    <span class="font-semibold text-gray-600">Total Leaf Components:</span>
+                    <span id="totalComponents" class="text-cyan-primary font-bold ml-1">0</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tables Container -->
+        <div id="tablesContainer" class="space-y-6">
+            <!-- Tables will be dynamically inserted here -->
+        </div>
+
+        <!-- Empty State -->
+        <div id="emptyState" class="bg-white rounded-lg shadow-sm p-12 text-center">
+            <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+            </svg>
+            <h3 class="mt-2 text-sm font-medium text-gray-900">No BOM data</h3>
+            <p class="mt-1 text-sm text-gray-500">Select a CSV file to view the BOM structure.</p>
+        </div>
+    </div>
+
+    <script>
+        let allData = [];
+        let filteredData = [];
+
+        // Parse CSV data
+        function parseCSV(text) {
+            const lines = text.split('\n').filter(line => line.trim());
+            const headers = lines[0].split(',').map(h => h.trim());
+
+            return lines.slice(1).map(line => {
+                const values = [];
+                let current = '';
+                let inQuotes = false;
+
+                for (let char of line) {
+                    if (char === '"') {
+                        inQuotes = !inQuotes;
+                    } else if (char === ',' && !inQuotes) {
+                        values.push(current.trim());
+                        current = '';
+                    } else {
+                        current += char;
+                    }
+                }
+                values.push(current.trim());
+
+                const obj = {};
+                headers.forEach((header, i) => {
+                    obj[header] = values[i] || '';
+                });
+                return obj;
+            });
+        }
+
+        // Group data by parent BOM reference
+        function groupByParent(data) {
+            const groups = {};
+
+            data.forEach(item => {
+                const parent = item.parent_bom_reference || 'Main Assembly';
+                if (!groups[parent]) {
+                    groups[parent] = {
+                        name: item.parent_bom_name || 'Main Assembly',
+                        items: [],
+                        level: parseInt(item.level) || 0
+                    };
+                }
+                groups[parent].items.push(item);
+            });
+
+            // Sort items within each group by component name (alphabetical)
+            Object.keys(groups).forEach(groupKey => {
+                groups[groupKey].items.sort((a, b) => {
+                    return (a.component_name || '').localeCompare(b.component_name || '');
+                });
+            });
+
+            return groups;
+        }
+
+        // Create table HTML
+        function createTable(parentRef, groupData, index) {
+            const tableId = `table-${index}`;
+            const isMainAssembly = parentRef === 'Main Assembly';
+
+            return `
+                <div class="bg-white rounded-lg shadow-sm overflow-hidden table-container" data-parent="${parentRef}">
+                    <div class="px-6 py-4 bg-gradient-to-r from-cyan-lighter to-gray-50 border-b border-gray-200 cursor-pointer hover-cyan" onclick="toggleTable('${tableId}')">
+                        <div class="flex justify-between items-center">
+                            <div>
+                                <h2 class="text-lg font-semibold text-gray-800">
+                                    ${groupData.name}
+                                    ${!isMainAssembly ? `<span class="text-sm font-normal text-gray-500 ml-2">(${parentRef})</span>` : ''}
+                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-cyan-light text-cyan-dark ml-3">
+                                        Level ${groupData.level}
+                                    </span>
+                                </h2>
+                                <p class="text-sm text-gray-600 mt-1">${groupData.items.length} component${groupData.items.length !== 1 ? 's' : ''}</p>
+                            </div>
+                            <svg class="w-5 h-5 text-gray-400 transform transition-transform" id="${tableId}-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                            </svg>
+                        </div>
+                    </div>
+
+                    <div id="${tableId}" class="overflow-x-auto">
+                        <table class="w-full">
+                            <thead class="bg-gray-50 border-b border-gray-200">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Reference</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Component Name</th>
+                                    <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Quantity</th>
+                                    <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Has BOM</th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200">
+                                ${groupData.items.map(item => `
+                                    <tr class="hover-cyan transition-colors data-row">
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                                            ${item.component_reference || '-'}
+                                        </td>
+                                        <td class="px-6 py-4 text-sm text-gray-900 level-indent-${Math.min(item.level, 5)}">
+                                            ${item.component_name}
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right font-mono">
+                                            ${item.component_quantity}
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-center">
+                                            ${item.has_child_bom === 'True' || item.has_child_bom === true ?
+                                                '<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-cyan-light text-cyan-dark">Yes</span>' :
+                                                '<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600">No</span>'}
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Toggle table visibility
+        function toggleTable(tableId) {
+            const table = document.getElementById(tableId);
+            const arrow = document.getElementById(`${tableId}-arrow`);
+
+            if (table.style.display === 'none') {
+                table.style.display = 'block';
+                arrow.style.transform = 'rotate(0deg)';
+            } else {
+                table.style.display = 'none';
+                arrow.style.transform = 'rotate(-90deg)';
+            }
+        }
+
+        // Apply filters
+        function applyFilters() {
+            const searchTerm = document.getElementById('globalSearch').value.toLowerCase();
+            const refFilter = document.getElementById('referenceFilter').value.toLowerCase();
+            const levelFilter = document.getElementById('levelFilter').value;
+
+            filteredData = allData.filter(item => {
+                let matches = true;
+
+                // Global search
+                if (searchTerm) {
+                    const searchableText = Object.values(item).join(' ').toLowerCase();
+                    matches = matches && searchableText.includes(searchTerm);
+                }
+
+                // Reference filter
+                if (refFilter) {
+                    matches = matches && item.component_reference.toLowerCase().includes(refFilter);
+                }
+
+                // Level filter
+                if (levelFilter) {
+                    if (levelFilter === '5') {
+                        matches = matches && parseInt(item.level) >= 5;
+                    } else {
+                        matches = matches && item.level === levelFilter;
+                    }
+                }
+
+                return matches;
+            });
+
+            renderTables();
+            highlightSearchTerms();
+            updateStatistics();
+        }
+
+        // Highlight search terms
+        function highlightSearchTerms() {
+            const searchTerm = document.getElementById('globalSearch').value.toLowerCase();
+            if (!searchTerm) return;
+
+            document.querySelectorAll('.data-row td').forEach(cell => {
+                const text = cell.textContent;
+                if (text.toLowerCase().includes(searchTerm)) {
+                    cell.classList.add('highlight');
+                } else {
+                    cell.classList.remove('highlight');
+                }
+            });
+        }
+
+        // Render tables
+        function renderTables() {
+            const container = document.getElementById('tablesContainer');
+            const emptyState = document.getElementById('emptyState');
+
+            if (filteredData.length === 0) {
+                container.innerHTML = '';
+                if (allData.length === 0) {
+                    emptyState.style.display = 'block';
+                } else {
+                    emptyState.style.display = 'none';
+                    container.innerHTML = '<div class="bg-white rounded-lg shadow-sm p-12 text-center"><p class="text-gray-500">No components match the current filters.</p></div>';
+                }
+                return;
+            }
+
+            emptyState.style.display = 'none';
+            const groups = groupByParent(filteredData);
+
+            // Sort groups by level (ascending), then by name for consistency
+            const sortedGroups = Object.entries(groups).sort((a, b) => {
+                const levelA = a[1].level;
+                const levelB = b[1].level;
+
+                if (levelA !== levelB) {
+                    return levelA - levelB;
+                }
+
+                // If levels are the same, sort by group name
+                return a[1].name.localeCompare(b[1].name);
+            });
+
+            container.innerHTML = sortedGroups.map(([parentRef, groupData], index) =>
+                createTable(parentRef, groupData, index)
+            ).join('');
+        }
+
+        // Update statistics
+        function updateStatistics() {
+            if (allData.length === 0) {
+                document.getElementById('statistics').classList.add('hidden');
+                return;
+            }
+
+            document.getElementById('statistics').classList.remove('hidden');
+
+            // Count only leaf components (components without child BOMs)
+            const leafComponents = filteredData.filter(item => item.has_child_bom !== 'True' && item.has_child_bom !== true).length;
+            document.getElementById('totalComponents').textContent = leafComponents;
+        }
+
+        // Export filtered data
+        function exportFilteredData() {
+            if (filteredData.length === 0) {
+                alert('No data to export');
+                return;
+            }
+
+            const headers = Object.keys(filteredData[0]);
+            const csvContent = [
+                headers.join(','),
+                ...filteredData.map(row =>
+                    headers.map(header => {
+                        const value = row[header] || '';
+                        return value.includes(',') ? `"${value}"` : value;
+                    }).join(',')
+                )
+            ].join('\n');
+
+            const blob = new Blob([csvContent], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `filtered_bom_${new Date().toISOString().split('T')[0]}.csv`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // Event listeners
+        document.getElementById('csvFile').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                const csvText = event.target.result;
+                allData = parseCSV(csvText);
+                filteredData = [...allData];
+                renderTables();
+                updateStatistics();
+            };
+            reader.readAsText(file);
+        });
+
+        document.getElementById('globalSearch').addEventListener('input', applyFilters);
+        document.getElementById('referenceFilter').addEventListener('input', applyFilters);
+        document.getElementById('levelFilter').addEventListener('change', applyFilters);
+
+        document.getElementById('clearFilters').addEventListener('click', function() {
+            document.getElementById('globalSearch').value = '';
+            document.getElementById('referenceFilter').value = '';
+            document.getElementById('levelFilter').value = '';
+            filteredData = [...allData];
+            renderTables();
+            updateStatistics();
+        });
+
+        document.getElementById('expandAll').addEventListener('click', function() {
+            document.querySelectorAll('[id^="table-"]').forEach(table => {
+                if (table.id.includes('-arrow')) return;
+                table.style.display = 'block';
+                const arrow = document.getElementById(`${table.id}-arrow`);
+                if (arrow) arrow.style.transform = 'rotate(0deg)';
+            });
+        });
+
+        document.getElementById('collapseAll').addEventListener('click', function() {
+            document.querySelectorAll('[id^="table-"]').forEach(table => {
+                if (table.id.includes('-arrow')) return;
+                table.style.display = 'none';
+                const arrow = document.getElementById(`${table.id}-arrow`);
+                if (arrow) arrow.style.transform = 'rotate(-90deg)';
+            });
+        });
+
+        document.getElementById('exportFiltered').addEventListener('click', exportFilteredData);
+    </script>
+</body>
+</html>

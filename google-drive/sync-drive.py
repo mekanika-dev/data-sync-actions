@@ -317,7 +317,6 @@ def main():
                     'md5': file_info.get('md5Checksum'),
                     'modified': file_info.get('modifiedTime'),
                     'size': file_info.get('size'),
-                    'original_name': file_name
                 }
             continue
         
@@ -348,7 +347,6 @@ def main():
                     'md5': file_info.get('md5Checksum'),
                     'modified': file_info.get('modifiedTime'),
                     'size': file_info.get('size'),
-                    'original_name': file_name
                 }
         else:
             # Nouveau fichier - vérifier les métadonnées pour éviter la re-téléchargement
@@ -367,7 +365,6 @@ def main():
                     'md5': file_info.get('md5Checksum'),
                     'modified': file_info.get('modifiedTime'),
                     'size': file_info.get('size'),
-                    'original_name': file_name
                 }
     
     # Sauvegarder les métadonnées
