@@ -206,14 +206,81 @@
                 groups[parent].items.push(item);
             });
 
-            // Sort items within each group by component name (alphabetical)
+            // Identify single-child BOMs and collapse them
+            const singleChildBOMs = new Set();
             Object.keys(groups).forEach(groupKey => {
-                groups[groupKey].items.sort((a, b) => {
+                if (groups[groupKey].items.length === 1) {
+                    singleChildBOMs.add(groupKey);
+                }
+            });
+
+            // Recursively find the final parent (skipping single-child intermediate BOMs)
+            function getFinalParent(parentRef) {
+                if (!singleChildBOMs.has(parentRef)) {
+                    return parentRef;
+                }
+                // This BOM has only one child, so find its parent
+                const childItems = groups[parentRef].items;
+                if (childItems.length === 1) {
+                    const childParent = childItems[0].parent_bom_reference || 'Main Assembly';
+                    return getFinalParent(childParent);
+                }
+                return parentRef;
+            }
+
+            // Collapse single-child BOMs by reassigning items to their final parent
+            const collapsedGroups = {};
+            Object.keys(groups).forEach(groupKey => {
+                const items = groups[groupKey].items;
+                items.forEach(item => {
+                    // If this item's reference is a single-child BOM, reassign its children to current group
+                    if (singleChildBOMs.has(item.component_reference) && groups[item.component_reference]) {
+                        const childItems = groups[item.component_reference].items;
+                        childItems.forEach(childItem => {
+                            // Add child items to current group instead of creating separate table
+                            if (!collapsedGroups[groupKey]) {
+                                collapsedGroups[groupKey] = {
+                                    name: groups[groupKey].name,
+                                    items: [],
+                                    level: groups[groupKey].level
+                                };
+                            }
+                            collapsedGroups[groupKey].items.push(childItem);
+                        });
+                    } else {
+                        // Normal item, add to collapsed groups
+                        if (!collapsedGroups[groupKey]) {
+                            collapsedGroups[groupKey] = {
+                                name: groups[groupKey].name,
+                                items: [],
+                                level: groups[groupKey].level
+                            };
+                        }
+                        collapsedGroups[groupKey].items.push(item);
+                    }
+                });
+            });
+
+            // Remove single-child BOM groups (they've been merged into parents)
+            singleChildBOMs.forEach(bomRef => {
+                delete collapsedGroups[bomRef];
+            });
+
+            // Sort items within each group by level first, then by component name (alphabetical)
+            Object.keys(collapsedGroups).forEach(groupKey => {
+                collapsedGroups[groupKey].items.sort((a, b) => {
+                    // First sort by level
+                    const levelA = parseInt(a.level) || 0;
+                    const levelB = parseInt(b.level) || 0;
+                    if (levelA !== levelB) {
+                        return levelA - levelB;
+                    }
+                    // Then sort by component name alphabetically
                     return (a.component_name || '').localeCompare(b.component_name || '');
                 });
             });
 
-            return groups;
+            return collapsedGroups;
         }
 
         // Create table HTML

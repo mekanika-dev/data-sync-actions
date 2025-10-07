@@ -54,16 +54,18 @@ class OdooBOMFetcher:
             'zebra', 'label', 'plastic bag', 'zip bag',
             'adhesive foam', 'bubble wrap', 'sleeve',
             'sticker', 'certificate', 'user manual', 'equipment wire',
-            'pallet', 'cardboard', 'packaging', 'box'
+            'pallet', 'cardboard', 'packaging', 'tgo', 'bep235', 'bep203', 
+            'pcad', 'cad18', 'chad70', 'cpl45', 'vk421', 'poster box', 'u foam', 
+            'bor15','bor35'
         ]
     
     def search_read(self, model: str, domain: List, fields: List) -> List[Dict]:
-        """Helper method to perform search_read operations"""
+        """Helper method to perform search_read operations with en_GB locale"""
         return self.models.execute_kw(
             self.db, self.uid, self.password,
             model, 'search_read',
             [domain],
-            {'fields': fields}
+            {'fields': fields, 'context': {'lang': 'en_GB'}}
         )
     
     def get_product_by_reference(self, reference: str) -> Optional[Dict]:
@@ -386,39 +388,12 @@ class OdooBOMFetcher:
                 # Check if this component has its own BOM
                 child_bom = self.get_bom_for_product(product_id)
                 if child_bom:
-                    # Check if this BOM has only one child and should be collapsed
-                    collapsed_component = self.get_collapsed_single_child(child_bom['id'], quantity, level)
-
-                    if collapsed_component:
-                        # Remove the parent component we just added and replace with the collapsed child
-                        if not should_filter and item_index >= 0:
-                            self.bom_data.pop(item_index)
-
-                        # Add the collapsed component directly
-                        print(f"      -> Collapsing single-child BOM {component_ref}, showing final component: {collapsed_component['component_reference']}")
-
-                        # Create properly formatted component entry
-                        adjusted_qty = self.adjust_quantity(collapsed_component['quantity'])
-                        if collapsed_component['quantity'] != adjusted_qty:
-                            print(f"        [Quantity adjusted from {collapsed_component['quantity']:.2f} to {adjusted_qty:.2f}]")
-
-                        formatted_component = {
-                            'level': collapsed_component['level'],
-                            'component_reference': collapsed_component['component_reference'],
-                            'component_name': collapsed_component['component_name'],
-                            'component_quantity': f"{adjusted_qty:.2f}",
-                            'parent_bom_reference': parent_reference,
-                            'parent_bom_name': self.parent_names.get(parent_reference, parent_reference),
-                            'has_child_bom': collapsed_component.get('has_child_bom', False)
-                        }
-
-                        self.bom_data.append(formatted_component)
-                    else:
-                        # Normal BOM processing - update has_child_bom flag and recurse
-                        if not should_filter and item_index >= 0:
-                            self.bom_data[item_index]['has_child_bom'] = True
-                        print(f"      -> Found child BOM for {component_ref}, fetching recursively...")
-                        self.get_bom_lines(child_bom['id'], component_ref if component_ref else component_name, quantity, level + 1)
+                    # Normal BOM processing - update has_child_bom flag and recurse
+                    # (Collapsing disabled to show all BOM levels)
+                    if not should_filter and item_index >= 0:
+                        self.bom_data[item_index]['has_child_bom'] = True
+                    print(f"      -> Found child BOM for {component_ref}, fetching recursively...")
+                    self.get_bom_lines(child_bom['id'], component_ref if component_ref else component_name, quantity, level + 1)
     
     def fetch_bom_recursive(self, reference: str) -> List[Dict]:
         """
