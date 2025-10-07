@@ -15,10 +15,12 @@ This repository provides reusable GitHub Actions for synchronizing data from ext
 - Preserves folder structure from Google Drive
 
 ### Odoo BOM Sync (`odoo/sync-odoo.py`)
-- Fetches Bill of Materials data from Odoo ERP via XML-RPC
-- Exports to CSV format with hierarchical structure
+- Fetches Bill of Materials data from Odoo ERP via XML-RPC with en_GB locale
+- Exports to CSV format with full hierarchical structure (all levels visible)
 - Includes circular reference protection
-- Optional HTML viewer (`odoo/bom_viewer.html`) for visualization
+- Automatically filters out packaging/labeling components (boxes, labels, bags, etc.)
+- Applies quantity adjustments for bulk items (reduces quantities based on thresholds)
+- Optional HTML viewer (`odoo/bom-viewer.html`) for interactive visualization with single-child BOM collapsing
 
 ## Common Development Tasks
 
@@ -67,8 +69,27 @@ Each action follows this pattern:
 
 ## Important Implementation Details
 
-- Google Drive sync requires service account JSON credentials
-- Odoo sync uses XML-RPC with API key authentication
-- Both scripts are designed to fail gracefully with clear error messages
+### Google Drive Sync
+- Requires service account JSON credentials
+- Uses prefix matching (first 5 characters) for file replacement
+- Tracks metadata to avoid re-downloading unchanged files
+
+### Odoo BOM Sync
+- Uses XML-RPC with API key authentication
+- Requests all product names in en_GB locale for consistency
+- Automatically filters packaging components using keywords: zebra, label, plastic bag, zip bag, adhesive foam, bubble wrap, sleeve, sticker, certificate, user manual, equipment wire, pallet, cardboard, packaging, tgo, bep235, bep203, pcad, cad18, chad70, cpl45, vk421, poster box, u foam, bor15, bor35
+- Shows all BOM hierarchy levels (no automatic collapsing in CSV export)
+- Supports both environment variables and local credentials file for flexibility
+- Designed to fail gracefully with clear error messages
+
+### BOM Viewer (`odoo/bom-viewer.html`)
+- Interactive HTML viewer for BOM CSV files
+- Automatically collapses single-child BOMs in display (e.g., if M01681 has only one child M00716, shows M00716 directly in parent table)
+- Sorts components by level first, then alphabetically by name within each level
+- Supports global search, reference filtering, and level filtering
+- Can export filtered results to CSV
+- Shows statistics on leaf components (components without child BOMs)
+
+### General
 - The `shared/` directory is reserved for future common utilities but currently empty
-- Odoo script supports both environment variables and local credentials file for flexibility
+- Both scripts are designed to run independently in GitHub Actions or locally
