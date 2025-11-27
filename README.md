@@ -33,18 +33,15 @@ Synchronizes Bill of Materials from Odoo ERP to your repository.
 Note: this script is very specific to Mekanika BoM naming and hierarchy.
 
 ### Automad Assembly Sync
-Synchronizes assembly guide pages from Automad CMS via SFTP (SSH File Transfer Protocol). Downloads complete folder structures including page metadata (.txt files) and media files, while automatically excluding pages marked as private.
+Synchronizes assembly guide pages from Automad CMS via FTP. Downloads complete folder structures including page metadata (.txt files) and media files, while automatically excluding pages marked as private.
 
 **Usage:**
 ```yaml
 # Download and run the sync script directly
-- name: Install dependencies
-  run: pip install paramiko
-
 - name: Download sync script
   run: |
     curl -o sync-automad.py \
-         https://raw.githubusercontent.com/mekanika-dev/data-sync-actions/main/automad/sync-automad-sftp.py
+         https://raw.githubusercontent.com/mekanika-dev/data-sync-actions/main/automad/sync-automad.py
 
 - name: Run Automad sync
   env:
@@ -58,13 +55,13 @@ Synchronizes assembly guide pages from Automad CMS via SFTP (SSH File Transfer P
 ```
 
 **Required Secrets:**
-- `AUTOMAD_HOST` - SFTP server hostname or IP
-- `AUTOMAD_USER` - SSH username
-- `AUTOMAD_PASSWORD` - SSH password
-- `AUTOMAD_PORT` - SSH port (typically 22)
+- `AUTOMAD_HOST` - FTP server hostname or IP
+- `AUTOMAD_USER` - FTP username
+- `AUTOMAD_PASSWORD` - FTP password
+- `AUTOMAD_PORT` - FTP port (typically 21, optional)
 
 **Features:**
-- Uses SFTP (more secure than FTP, leverages existing SSH server)
+- Uses FTP for compatibility with existing hosting environment
 - Preserves complete folder/subfolder structure
 - Skips pages marked with `private: on` in metadata
 - Uses MD5 checksums to avoid re-downloading unchanged files
