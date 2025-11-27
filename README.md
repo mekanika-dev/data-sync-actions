@@ -53,6 +53,7 @@ Synchronizes assembly guide pages from Automad CMS via SFTP (SSH File Transfer P
     AUTOMAD_PASSWORD: ${{ secrets.AUTOMAD_PASSWORD }} # or AUTOMAD_SSH_KEY
     AUTOMAD_SSH_KEY: ${{ secrets.AUTOMAD_SSH_KEY }}
     AUTOMAD_PORT: ${{ secrets.AUTOMAD_PORT }}
+    AUTOMAD_MAX_FILE_SIZE: ${{ secrets.AUTOMAD_MAX_FILE_SIZE }} # optional (bytes)
     REMOTE_PATH: "/var/www/html/automad-master/pages/assembly"
     TARGET_PATH: "assembly"
   run: python sync-automad.py
@@ -63,10 +64,12 @@ Synchronizes assembly guide pages from Automad CMS via SFTP (SSH File Transfer P
 - `AUTOMAD_USER` - SSH username
 - `AUTOMAD_PASSWORD` or `AUTOMAD_SSH_KEY` - SSH password or private key
 - `AUTOMAD_PORT` - SSH port (typically 22, optional)
+- `AUTOMAD_MAX_FILE_SIZE` - Optional max file size in bytes (defaults to ~100 MB)
 
 **Features:**
 - Uses SFTP (secure SSH transport)
 - Preserves complete folder/subfolder structure
 - Skips pages marked with `private: on` in metadata
+- Automatically skips files larger than GitHub's 100 MB limit
 - Uses MD5 checksums to avoid re-downloading unchanged files
 - Tracks sync state in `.sync-metadata.json`

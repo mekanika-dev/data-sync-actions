@@ -15,6 +15,9 @@ from pathlib import Path
 from datetime import datetime
 import paramiko
 
+# Default maximum file size (bytes) to keep within GitHub's 100 MB limit
+MAX_FILE_SIZE_BYTES = int(os.environ.get('AUTOMAD_MAX_FILE_SIZE', str(100 * 1024 * 1024 - 1024)))
+
 
 def calculate_md5(file_path):
     """Calculate MD5 hash of a file"""
@@ -212,6 +215,7 @@ def sync_automad_files(sftp, remote_base_path, local_base_path, metadata):
     synced = 0
     skipped = 0
     private_skipped = 0
+    size_skipped = 0
 
     for remote_path, size in files:
         # Calculate relative path
@@ -232,6 +236,11 @@ def sync_automad_files(sftp, remote_base_path, local_base_path, metadata):
 
         if is_in_private_folder:
             private_skipped += 1
+            continue
+
+        if size and size > MAX_FILE_SIZE_BYTES:
+            print(f"⚠️  Skipping (too large): {relative_path} ({size / (1024 * 1024):.2f} MB)")
+            size_skipped += 1
             continue
 
         local_path = local_base_path / relative_path
@@ -270,7 +279,7 @@ def sync_automad_files(sftp, remote_base_path, local_base_path, metadata):
             else:
                 print(f"❌ Failed to download: {relative_path}")
 
-    return synced, skipped, private_skipped
+    return synced, skipped, private_skipped, size_skipped
 
 
 def main():
@@ -316,7 +325,7 @@ def main():
         sftp, transport = connect_sftp(host, user, password=password, ssh_key=ssh_key, port=port)
 
         # Sync files
-        synced, skipped, private_skipped = sync_automad_files(sftp, remote_path, target_path, metadata)
+        synced, skipped, private_skipped, size_skipped = sync_automad_files(sftp, remote_path, target_path, metadata)
 
         # Close SFTP connection
         sftp.close()
@@ -331,6 +340,7 @@ def main():
         print(f"  ✅ Synced: {synced}")
         print(f"  ⏭️  Skipped (unchanged): {skipped}")
         print(f"  🔒 Skipped (private): {private_skipped}")
+        print(f"  ⛔ Skipped (too large): {size_skipped}")
         print(f"  📁 Remote path: {remote_path}")
         print(f"  📂 Local path: {target_path}")
 
