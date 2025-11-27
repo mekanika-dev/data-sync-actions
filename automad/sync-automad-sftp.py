@@ -19,18 +19,6 @@ import paramiko
 MAX_FILE_SIZE_BYTES = int(os.environ.get('AUTOMAD_MAX_FILE_SIZE', str(100 * 1024 * 1024 - 1024)))
 
 
-def natural_sort_key(value):
-    """Return a key for natural sorting (handles numbers within strings)."""
-    parts = re.split(r'(\d+)', value)
-    key = []
-    for part in parts:
-        if part.isdigit():
-            key.append(int(part))
-        else:
-            key.append(part.lower())
-    return key
-
-
 def calculate_md5(file_path):
     """Calculate MD5 hash of a file"""
     hash_md5 = hashlib.md5()
@@ -84,7 +72,7 @@ def list_sftp_contents(sftp, path):
     items = []
 
     try:
-        entries = sorted(sftp.listdir_attr(path), key=lambda entry: natural_sort_key(entry.filename))
+        entries = sftp.listdir_attr(path)
     except IOError as e:
         print(f"⚠️  Cannot access {path}: {e}")
         return items
@@ -228,6 +216,9 @@ def sync_automad_files(sftp, remote_base_path, local_base_path, metadata):
     skipped = 0
     private_skipped = 0
     size_skipped = 0
+    removed_local_files = 0
+    removed_local_dirs = 0
+    remote_files = set()
 
     for remote_path, size in files:
         # Calculate relative path
@@ -235,6 +226,8 @@ def sync_automad_files(sftp, remote_base_path, local_base_path, metadata):
             relative_path = remote_path[len(remote_base_path):].lstrip('/')
         else:
             relative_path = remote_path.lstrip('/')
+
+        remote_files.add(relative_path)
 
         # Check if this file is in a private folder
         relative_folder = str(Path(relative_path).parent)
@@ -291,7 +284,57 @@ def sync_automad_files(sftp, remote_base_path, local_base_path, metadata):
             else:
                 print(f"❌ Failed to download: {relative_path}")
 
-    return synced, skipped, private_skipped, size_skipped
+    # Remove local files that no longer exist on the remote
+    for local_file in local_base_path.rglob('*'):
+        if not local_file.is_file():
+            continue
+
+        relative_path = str(local_file.relative_to(local_base_path))
+
+        if relative_path == '.sync-metadata.json':
+            continue
+
+        if relative_path not in remote_files:
+            try:
+                local_file.unlink()
+                removed_local_files += 1
+                metadata['files'].pop(relative_path, None)
+                print(f"🗑️  Removed local file not on remote: {relative_path}")
+            except Exception as e:
+                print(f"⚠️  Could not remove {relative_path}: {e}")
+
+    # Remove empty directories that no longer exist remotely
+    remote_dirs = {''}
+    for rel_path in remote_files:
+        parent = Path(rel_path).parent
+        while True:
+            parent_str = '' if str(parent) in ('.', '') else str(parent)
+            remote_dirs.add(parent_str)
+            if parent_str == '':
+                break
+            parent = parent.parent
+
+    local_dirs = sorted([p for p in local_base_path.rglob('*') if p.is_dir()],
+                        key=lambda p: len(p.parts),
+                        reverse=True)
+
+    for directory in local_dirs:
+        rel_dir = str(directory.relative_to(local_base_path))
+        if rel_dir in ('', '.'):
+            continue
+
+        if rel_dir in remote_dirs:
+            continue
+
+        try:
+            directory.rmdir()
+            removed_local_dirs += 1
+            print(f"🧹 Removed empty folder not on remote: {rel_dir}")
+        except OSError:
+            # Directory not empty, skip
+            continue
+
+    return synced, skipped, private_skipped, size_skipped, removed_local_files, removed_local_dirs
 
 
 def main():
@@ -337,7 +380,8 @@ def main():
         sftp, transport = connect_sftp(host, user, password=password, ssh_key=ssh_key, port=port)
 
         # Sync files
-        synced, skipped, private_skipped, size_skipped = sync_automad_files(sftp, remote_path, target_path, metadata)
+        synced, skipped, private_skipped, size_skipped, removed_files, removed_dirs = sync_automad_files(
+            sftp, remote_path, target_path, metadata)
 
         # Close SFTP connection
         sftp.close()
@@ -353,6 +397,8 @@ def main():
         print(f"  ⏭️  Skipped (unchanged): {skipped}")
         print(f"  🔒 Skipped (private): {private_skipped}")
         print(f"  ⛔ Skipped (too large): {size_skipped}")
+        print(f"  🗑️  Removed local files: {removed_files}")
+        print(f"  🧹 Removed local folders: {removed_dirs}")
         print(f"  📁 Remote path: {remote_path}")
         print(f"  📂 Local path: {target_path}")
 

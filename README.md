@@ -71,5 +71,6 @@ Synchronizes assembly guide pages from Automad CMS via SFTP (SSH File Transfer P
 - Preserves complete folder/subfolder structure
 - Skips pages marked with `private: on` in metadata
 - Automatically skips files larger than GitHub's 100 MB limit
+- Removes local files/folders that no longer exist on Automad
 - Uses MD5 checksums to avoid re-downloading unchanged files
 - Tracks sync state in `.sync-metadata.json`
