@@ -33,21 +33,25 @@ Synchronizes Bill of Materials from Odoo ERP to your repository.
 Note: this script is very specific to Mekanika BoM naming and hierarchy.
 
 ### Automad Assembly Sync
-Synchronizes assembly guide pages from Automad CMS via FTP. Downloads complete folder structures including page metadata (.txt files) and media files, while automatically excluding pages marked as private.
+Synchronizes assembly guide pages from Automad CMS via SFTP (SSH File Transfer Protocol). Downloads complete folder structures including page metadata (.txt files) and media files, while automatically excluding pages marked as private.
 
 **Usage:**
 ```yaml
 # Download and run the sync script directly
+- name: Install dependencies
+  run: pip install paramiko
+
 - name: Download sync script
   run: |
     curl -o sync-automad.py \
-         https://raw.githubusercontent.com/mekanika-dev/data-sync-actions/main/automad/sync-automad.py
+         https://raw.githubusercontent.com/mekanika-dev/data-sync-actions/main/automad/sync-automad-sftp.py
 
 - name: Run Automad sync
   env:
     AUTOMAD_HOST: ${{ secrets.AUTOMAD_HOST }}
     AUTOMAD_USER: ${{ secrets.AUTOMAD_USER }}
-    AUTOMAD_PASSWORD: ${{ secrets.AUTOMAD_PASSWORD }}
+    AUTOMAD_PASSWORD: ${{ secrets.AUTOMAD_PASSWORD }} # or AUTOMAD_SSH_KEY
+    AUTOMAD_SSH_KEY: ${{ secrets.AUTOMAD_SSH_KEY }}
     AUTOMAD_PORT: ${{ secrets.AUTOMAD_PORT }}
     REMOTE_PATH: "/var/www/html/automad-master/pages/assembly"
     TARGET_PATH: "assembly"
@@ -55,13 +59,13 @@ Synchronizes assembly guide pages from Automad CMS via FTP. Downloads complete f
 ```
 
 **Required Secrets:**
-- `AUTOMAD_HOST` - FTP server hostname or IP
-- `AUTOMAD_USER` - FTP username
-- `AUTOMAD_PASSWORD` - FTP password
-- `AUTOMAD_PORT` - FTP port (typically 21, optional)
+- `AUTOMAD_HOST` - SFTP server hostname or IP
+- `AUTOMAD_USER` - SSH username
+- `AUTOMAD_PASSWORD` or `AUTOMAD_SSH_KEY` - SSH password or private key
+- `AUTOMAD_PORT` - SSH port (typically 22, optional)
 
 **Features:**
-- Uses FTP for compatibility with existing hosting environment
+- Uses SFTP (secure SSH transport)
 - Preserves complete folder/subfolder structure
 - Skips pages marked with `private: on` in metadata
 - Uses MD5 checksums to avoid re-downloading unchanged files
