@@ -19,6 +19,18 @@ import paramiko
 MAX_FILE_SIZE_BYTES = int(os.environ.get('AUTOMAD_MAX_FILE_SIZE', str(100 * 1024 * 1024 - 1024)))
 
 
+def natural_sort_key(value):
+    """Return a key for natural sorting (handles numbers within strings)."""
+    parts = re.split(r'(\d+)', value)
+    key = []
+    for part in parts:
+        if part.isdigit():
+            key.append(int(part))
+        else:
+            key.append(part.lower())
+    return key
+
+
 def calculate_md5(file_path):
     """Calculate MD5 hash of a file"""
     hash_md5 = hashlib.md5()
@@ -72,7 +84,7 @@ def list_sftp_contents(sftp, path):
     items = []
 
     try:
-        entries = sftp.listdir_attr(path)
+        entries = sorted(sftp.listdir_attr(path), key=lambda entry: natural_sort_key(entry.filename))
     except IOError as e:
         print(f"⚠️  Cannot access {path}: {e}")
         return items
