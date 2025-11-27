@@ -17,11 +17,11 @@ Synchronizes files from Google Drive folders to your repository.
 - `DRIVE_DOCS_FOLDER_ID` - Google Drive folder ID
 
 ### Odoo BOM Sync
-Synchronizes Bill of Materials from Odoo ERP to your repository. 
+Synchronizes Bill of Materials from Odoo ERP to your repository.
 
 **Usage:**
 ```yaml
-- uses: mekanika-dev/data-sync-actions/odoo@main 
+- uses: mekanika-dev/data-sync-actions/odoo@main
 ```
 
 **Required Secrets:**
@@ -31,3 +31,37 @@ Synchronizes Bill of Materials from Odoo ERP to your repository.
 - `ODOO_API_KEY` - API key for authentication
 
 Note: this script is very specific to Mekanika BoM naming and hierarchy.
+
+### Automad Assembly Sync
+Synchronizes assembly guide pages from Automad CMS via FTP. Downloads complete folder structures including page metadata (.txt files) and media files, while automatically excluding pages marked as private.
+
+**Usage:**
+```yaml
+# Download and run the sync script directly
+- name: Download sync script
+  run: |
+    curl -o sync-automad.py \
+         https://raw.githubusercontent.com/mekanika-dev/data-sync-actions/main/automad/sync-automad.py
+
+- name: Run Automad sync
+  env:
+    AUTOMAD_HOST: ${{ secrets.AUTOMAD_HOST }}
+    AUTOMAD_USER: ${{ secrets.AUTOMAD_USER }}
+    AUTOMAD_PASSWORD: ${{ secrets.AUTOMAD_PASSWORD }}
+    AUTOMAD_PORT: ${{ secrets.AUTOMAD_PORT }}
+    REMOTE_PATH: "/pages/assembly"
+    TARGET_PATH: "assembly"
+  run: python sync-automad.py
+```
+
+**Required Secrets:**
+- `AUTOMAD_HOST` - FTP server hostname or IP
+- `AUTOMAD_USER` - FTP username
+- `AUTOMAD_PASSWORD` - FTP password
+- `AUTOMAD_PORT` - FTP port (typically 21)
+
+**Features:**
+- Preserves complete folder/subfolder structure
+- Skips pages marked with `private: on` in metadata
+- Uses MD5 checksums to avoid re-downloading unchanged files
+- Tracks sync state in `.sync-metadata.json`
