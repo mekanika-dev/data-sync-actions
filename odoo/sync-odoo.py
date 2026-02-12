@@ -294,15 +294,13 @@ class OdooBOMFetcher:
                 ['default_code', 'name', 'display_name', 'product_tmpl_id']
             )
 
-            # Debug specific product to understand naming
-            component_ref_temp = product_details[0]['default_code'] if product_details else ""
-            if component_ref_temp == "M00279":
-                print(f"      [DEBUG M00279] Product name: '{product_details[0]['name']}'")
-                print(f"      [DEBUG M00279] Display name: '{product_details[0]['display_name']}'")
+            if not product_details:
+                print(f"    * [WARNING] Product ID {product_id} not found, skipping...")
+                continue
 
             # Also get template details to compare names
             template_name = None
-            if product_details and product_details[0].get('product_tmpl_id'):
+            if product_details[0].get('product_tmpl_id'):
                 template_id = product_details[0]['product_tmpl_id'][0] if isinstance(product_details[0]['product_tmpl_id'], (list, tuple)) else product_details[0]['product_tmpl_id']
                 template_details = self.search_read(
                     'product.template',
@@ -315,85 +313,79 @@ class OdooBOMFetcher:
             # Try to get the most accurate name
             # Priority: template name (if different and cleaner), then product name, then display name
             if template_name and template_name != product_details[0]['name']:
-                # Use template name if it's different (usually more accurate)
                 final_name = template_name
             else:
-                # Use the product name
                 final_name = product_details[0]['name']
 
-            if product_details:
-                # Use blank string if no reference instead of PROD_ID
-                component_ref = product_details[0]['default_code'] or ""
-                # Use the final determined name
-                component_name = final_name
+            # Use blank string if no reference instead of PROD_ID
+            component_ref = product_details[0]['default_code'] or ""
+            component_name = final_name
 
-                # Remove any ' (copy)' suffix that might be in the name
-                if component_name.endswith(' (copy)'):
-                    component_name = component_name[:-7]
+            # Remove any ' (copy)' suffix that might be in the name
+            if component_name.endswith(' (copy)'):
+                component_name = component_name[:-7]
 
-                print(f"    * {component_ref}: {component_name} (Qty: {quantity})")
+            print(f"    * {component_ref}: {component_name} (Qty: {quantity})")
 
-                # Check if component should be filtered out
-                should_filter = any(keyword in component_name.lower() for keyword in self.filter_keywords)
+            # Check if component should be filtered out
+            should_filter = any(keyword in component_name.lower() for keyword in self.filter_keywords)
 
-                if should_filter:
-                    print(f"        [Filtered out: packaging/labeling component]")
-                else:
-                    # Apply quantity adjustment
-                    adjusted_qty = self.adjust_quantity(quantity)
-                    if quantity != adjusted_qty:
-                        print(f"        [Quantity adjusted from {quantity:.2f} to {adjusted_qty:.2f}]")
+            if should_filter:
+                print(f"        [Filtered out: packaging/labeling component]")
+            else:
+                # Apply quantity adjustment
+                adjusted_qty = self.adjust_quantity(quantity)
+                if quantity != adjusted_qty:
+                    print(f"        [Quantity adjusted from {quantity:.2f} to {adjusted_qty:.2f}]")
 
-                    # Get parent name if not cached
-                    if parent_reference not in self.parent_names:
-                        # Search for parent product to get its name
-                        parent_products = self.search_read(
-                            'product.product',
-                            [['default_code', '=', parent_reference]],
-                            ['name', 'product_tmpl_id']
-                        )
-                        if parent_products:
-                            parent_name = parent_products[0]['name']
-                            # Try to get cleaner name from template
-                            if parent_products[0].get('product_tmpl_id'):
-                                template_id = parent_products[0]['product_tmpl_id'][0] if isinstance(parent_products[0]['product_tmpl_id'], (list, tuple)) else parent_products[0]['product_tmpl_id']
-                                template_details = self.search_read(
-                                    'product.template',
-                                    [['id', '=', template_id]],
-                                    ['name']
-                                )
-                                if template_details:
-                                    parent_name = template_details[0]['name']
-                            # Remove (copy) suffix if present
-                            if parent_name.endswith(' (copy)'):
-                                parent_name = parent_name[:-7]
-                            self.parent_names[parent_reference] = parent_name
-                        else:
-                            self.parent_names[parent_reference] = parent_reference
+                # Get parent name if not cached
+                if parent_reference not in self.parent_names:
+                    # Search for parent product to get its name
+                    parent_products = self.search_read(
+                        'product.product',
+                        [['default_code', '=', parent_reference]],
+                        ['name', 'product_tmpl_id']
+                    )
+                    if parent_products:
+                        parent_name = parent_products[0]['name']
+                        # Try to get cleaner name from template
+                        if parent_products[0].get('product_tmpl_id'):
+                            template_id = parent_products[0]['product_tmpl_id'][0] if isinstance(parent_products[0]['product_tmpl_id'], (list, tuple)) else parent_products[0]['product_tmpl_id']
+                            template_details = self.search_read(
+                                'product.template',
+                                [['id', '=', template_id]],
+                                ['name']
+                            )
+                            if template_details:
+                                parent_name = template_details[0]['name']
+                        # Remove (copy) suffix if present
+                        if parent_name.endswith(' (copy)'):
+                            parent_name = parent_name[:-7]
+                        self.parent_names[parent_reference] = parent_name
+                    else:
+                        self.parent_names[parent_reference] = parent_reference
 
-                    # Add component to data (including those with child BOMs)
-                    self.bom_data.append({
-                        'level': level,
-                        'component_reference': component_ref,
-                        'component_name': component_name,
-                        'component_quantity': f"{adjusted_qty:.2f}",
-                        'parent_bom_reference': parent_reference,
-                        'parent_bom_name': self.parent_names.get(parent_reference, parent_reference),
-                        'has_child_bom': False  # Will be updated if child BOM found
-                    })
+                # Add component to data (including those with child BOMs)
+                self.bom_data.append({
+                    'level': level,
+                    'component_reference': component_ref,
+                    'component_name': component_name,
+                    'component_quantity': f"{adjusted_qty:.2f}",
+                    'parent_bom_reference': parent_reference,
+                    'parent_bom_name': self.parent_names.get(parent_reference, parent_reference),
+                    'has_child_bom': False  # Will be updated if child BOM found
+                })
 
-                    # Store index of this item to update has_child_bom if needed
-                    item_index = len(self.bom_data) - 1
+                # Store index of this item to update has_child_bom if needed
+                item_index = len(self.bom_data) - 1
 
-                # Check if this component has its own BOM
-                child_bom = self.get_bom_for_product(product_id)
-                if child_bom:
-                    # Normal BOM processing - update has_child_bom flag and recurse
-                    # (Collapsing disabled to show all BOM levels)
-                    if not should_filter and item_index >= 0:
-                        self.bom_data[item_index]['has_child_bom'] = True
-                    print(f"      -> Found child BOM for {component_ref}, fetching recursively...")
-                    self.get_bom_lines(child_bom['id'], component_ref if component_ref else component_name, quantity, level + 1)
+            # Check if this component has its own BOM
+            child_bom = self.get_bom_for_product(product_id)
+            if child_bom:
+                if not should_filter and item_index >= 0:
+                    self.bom_data[item_index]['has_child_bom'] = True
+                print(f"      -> Found child BOM for {component_ref}, fetching recursively...")
+                self.get_bom_lines(child_bom['id'], component_ref if component_ref else component_name, quantity, level + 1)
     
     def fetch_bom_recursive(self, reference: str) -> List[Dict]:
         """
