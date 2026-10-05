@@ -206,64 +206,40 @@
                 groups[parent].items.push(item);
             });
 
-            // Identify single-child BOMs and collapse them
+            // The main product row (level 0) is shown as the title of the top-level table, not as its own table
+            const rootItem = data.find(item => item.level === '0');
+            const rootRef = rootItem ? rootItem.component_reference : null;
+            delete groups['Main Assembly'];
+
+            // Identify single-child BOMs and collapse them (except the main product's BOM, so the top-level table is kept)
             const singleChildBOMs = new Set();
             Object.keys(groups).forEach(groupKey => {
-                if (groups[groupKey].items.length === 1) {
+                if (groups[groupKey].items.length === 1 && groupKey !== rootRef) {
                     singleChildBOMs.add(groupKey);
                 }
             });
 
-            // Recursively find the final parent (skipping single-child intermediate BOMs)
-            function getFinalParent(parentRef) {
-                if (!singleChildBOMs.has(parentRef)) {
-                    return parentRef;
+            // Replace an item by the only child of its BOM, following chains of single-child BOMs
+            function resolveItem(item) {
+                const visited = new Set();
+                while (singleChildBOMs.has(item.component_reference) && !visited.has(item.component_reference)) {
+                    visited.add(item.component_reference);
+                    item = groups[item.component_reference].items[0];
                 }
-                // This BOM has only one child, so find its parent
-                const childItems = groups[parentRef].items;
-                if (childItems.length === 1) {
-                    const childParent = childItems[0].parent_bom_reference || 'Main Assembly';
-                    return getFinalParent(childParent);
-                }
-                return parentRef;
+                return item;
             }
 
-            // Collapse single-child BOMs by reassigning items to their final parent
+            // Collapse single-child BOMs: their child is shown directly in the parent table
             const collapsedGroups = {};
             Object.keys(groups).forEach(groupKey => {
-                const items = groups[groupKey].items;
-                items.forEach(item => {
-                    // If this item's reference is a single-child BOM, reassign its children to current group
-                    if (singleChildBOMs.has(item.component_reference) && groups[item.component_reference]) {
-                        const childItems = groups[item.component_reference].items;
-                        childItems.forEach(childItem => {
-                            // Add child items to current group instead of creating separate table
-                            if (!collapsedGroups[groupKey]) {
-                                collapsedGroups[groupKey] = {
-                                    name: groups[groupKey].name,
-                                    items: [],
-                                    level: groups[groupKey].level
-                                };
-                            }
-                            collapsedGroups[groupKey].items.push(childItem);
-                        });
-                    } else {
-                        // Normal item, add to collapsed groups
-                        if (!collapsedGroups[groupKey]) {
-                            collapsedGroups[groupKey] = {
-                                name: groups[groupKey].name,
-                                items: [],
-                                level: groups[groupKey].level
-                            };
-                        }
-                        collapsedGroups[groupKey].items.push(item);
-                    }
-                });
-            });
-
-            // Remove single-child BOM groups (they've been merged into parents)
-            singleChildBOMs.forEach(bomRef => {
-                delete collapsedGroups[bomRef];
+                if (singleChildBOMs.has(groupKey)) {
+                    return;
+                }
+                collapsedGroups[groupKey] = {
+                    name: groups[groupKey].name,
+                    items: groups[groupKey].items.map(resolveItem),
+                    level: groups[groupKey].level
+                };
             });
 
             // Sort items within each group by level first, then by component name (alphabetical)
