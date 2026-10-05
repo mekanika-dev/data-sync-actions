@@ -42,11 +42,13 @@ class OdooBOMFetcher:
 
         print(f"Connected to Odoo (User ID: {self.uid})")
         
-        # Cache for already processed BOMs to avoid circular references
-        self.processed_boms: Set[int] = set()
+        # BOMs on the current recursion path, to detect circular references
+        self.bom_path: Set[int] = set()
         self.bom_data: List[Dict] = []
-        # Cache for parent BOM names
-        self.parent_names: Dict[str, str] = {}
+        # Cache of product details by product.product ID
+        self.product_cache: Dict[int, Optional[Dict]] = {}
+        # Cache of attribute ID by product.template.attribute.value ID
+        self.ptav_attribute_cache: Dict[int, int] = {}
 
         # Keywords to filter out packaging/labeling components
         # Using more specific terms to avoid filtering actual components
@@ -59,14 +61,78 @@ class OdooBOMFetcher:
             'bor15','bor35'
         ]
     
-    def search_read(self, model: str, domain: List, fields: List) -> List[Dict]:
+    def search_read(self, model: str, domain: List, fields: List,
+                    order: Optional[str] = None, context: Optional[Dict] = None) -> List[Dict]:
         """Helper method to perform search_read operations with en_GB locale"""
+        kwargs = {'fields': fields, 'context': {'lang': 'en_GB', **(context or {})}}
+        if order:
+            kwargs['order'] = order
         return self.models.execute_kw(
             self.db, self.uid, self.password,
             model, 'search_read',
             [domain],
-            {'fields': fields, 'context': {'lang': 'en_GB'}}
+            kwargs
         )
+
+    def get_product_info(self, product_id: int) -> Optional[Dict]:
+        """
+        Get cached product details, with the variant name (e.g. "Dust Collection Kit (PRO)")
+
+        Args:
+            product_id: Product ID
+
+        Returns:
+            Dict with id, reference, name, template_id and ptav_ids, or None if not found
+        """
+        if product_id not in self.product_cache:
+            products = self.search_read(
+                'product.product',
+                [['id', '=', product_id]],
+                ['default_code', 'display_name', 'product_tmpl_id', 'product_template_attribute_value_ids'],
+                context={'display_default_code': False, 'active_test': False}
+            )
+            if products:
+                product = products[0]
+                self.product_cache[product_id] = {
+                    'id': product_id,
+                    'reference': product['default_code'] or "",
+                    'name': product['display_name'].replace(' (copy)', ''),
+                    'template_id': product['product_tmpl_id'][0],
+                    'ptav_ids': set(product['product_template_attribute_value_ids']),
+                }
+            else:
+                self.product_cache[product_id] = None
+        return self.product_cache[product_id]
+
+    def line_applies_to_variant(self, line_ptav_ids: List[int], variant_ptav_ids: Set[int]) -> bool:
+        """
+        Check a BOM line's "Apply on Variants" condition, like Odoo's _skip_bom_line:
+        for every attribute in the condition, the variant must have one of the listed values.
+
+        Args:
+            line_ptav_ids: bom_product_template_attribute_value_ids of the BOM line
+            variant_ptav_ids: product_template_attribute_value_ids of the product being exploded
+
+        Returns:
+            True if the line applies to the variant
+        """
+        if not line_ptav_ids:
+            return True
+
+        missing = [ptav_id for ptav_id in line_ptav_ids if ptav_id not in self.ptav_attribute_cache]
+        if missing:
+            for ptav in self.search_read(
+                'product.template.attribute.value',
+                [['id', 'in', missing]],
+                ['attribute_id'],
+                context={'active_test': False}
+            ):
+                self.ptav_attribute_cache[ptav['id']] = ptav['attribute_id'][0]
+
+        required_attributes = {self.ptav_attribute_cache.get(ptav_id) for ptav_id in line_ptav_ids}
+        matched_attributes = {self.ptav_attribute_cache.get(ptav_id) for ptav_id in line_ptav_ids
+                              if ptav_id in variant_ptav_ids}
+        return required_attributes == matched_attributes
     
     def get_product_by_reference(self, reference: str) -> Optional[Dict]:
         """
@@ -103,47 +169,35 @@ class OdooBOMFetcher:
     
     def get_bom_for_product(self, product_id: int) -> Optional[Dict]:
         """
-        Get the main BOM for a product
-        
+        Get the main BOM for a product, selected like Odoo's _bom_find:
+        variant-specific or template BOMs, ordered by sequence, variant-specific first
+
         Args:
             product_id: Product ID
-            
+
         Returns:
             BOM data dict or None if no BOM exists
         """
+        product = self.get_product_info(product_id)
+        if not product:
+            return None
+
         boms = self.search_read(
             'mrp.bom',
             [
+                ['active', '=', True],
+                '|',
                 ['product_id', '=', product_id],
-                ['active', '=', True]
+                '&',
+                ['product_id', '=', False],
+                ['product_tmpl_id', '=', product['template_id']]
             ],
-            ['id', 'code', 'product_id', 'product_tmpl_id']
+            ['id', 'code', 'product_id', 'product_tmpl_id'],
+            order='sequence, product_id, id'
         )
-        
-        if not boms:
-            # Try searching by product template
-            product = self.search_read(
-                'product.product',
-                [['id', '=', product_id]],
-                ['product_tmpl_id']
-            )
-            if product:
-                tmpl_id = product[0]['product_tmpl_id'][0] if product[0]['product_tmpl_id'] else None
-                if tmpl_id:
-                    boms = self.search_read(
-                        'mrp.bom',
-                        [
-                            ['product_tmpl_id', '=', tmpl_id],
-                            ['active', '=', True],
-                            '|',
-                            ['product_id', '=', False],
-                            ['product_id', '=', product_id]
-                        ],
-                        ['id', 'code', 'product_id', 'product_tmpl_id']
-                    )
-        
+
         return boms[0] if boms else None
-    
+
     def adjust_quantity(self, quantity: float) -> float:
         """
         Adjust quantity based on rules:
@@ -159,274 +213,112 @@ class OdooBOMFetcher:
             return max(0, quantity - 10)
         return quantity
 
-    def get_collapsed_single_child(self, bom_id: int, parent_qty: float, level: int) -> Optional[Dict]:
+    def get_bom_lines(self, bom_id: int, parent: Dict, parent_qty: float = 1.0, level: int = 1) -> None:
         """
-        Recursively check if a BOM has only one non-filtered child and return the final component.
-
-        Args:
-            bom_id: BOM ID to check
-            parent_qty: Quantity multiplier from parent
-            level: Current level for the final component
-
-        Returns:
-            Dict with component data if BOM should be collapsed, None otherwise
-        """
-        # Get BOM lines
-        bom_lines = self.search_read(
-            'mrp.bom.line',
-            [['bom_id', '=', bom_id]],
-            ['product_id', 'product_qty', 'product_uom_id']
-        )
-
-        # Filter out invalid lines and get non-filtered components
-        valid_components = []
-        for line in bom_lines:
-            if not line['product_id']:
-                continue
-
-            product_id = line['product_id'][0]
-            quantity = line['product_qty'] * parent_qty
-
-            # Get product details
-            product_details = self.search_read(
-                'product.product',
-                [['id', '=', product_id]],
-                ['default_code', 'name', 'display_name', 'product_tmpl_id']
-            )
-
-            if not product_details:
-                continue
-
-            # Get template name for cleaner naming
-            template_name = None
-            if product_details[0].get('product_tmpl_id'):
-                template_id = product_details[0]['product_tmpl_id'][0] if isinstance(product_details[0]['product_tmpl_id'], (list, tuple)) else product_details[0]['product_tmpl_id']
-                template_details = self.search_read(
-                    'product.template',
-                    [['id', '=', template_id]],
-                    ['name']
-                )
-                if template_details:
-                    template_name = template_details[0]['name']
-
-            # Determine final name
-            if template_name and template_name != product_details[0]['name']:
-                final_name = template_name
-            else:
-                final_name = product_details[0]['name']
-
-            # Remove (copy) suffix
-            if final_name.endswith(' (copy)'):
-                final_name = final_name[:-7]
-
-            component_ref = product_details[0]['default_code'] or ""
-
-            # Check if component should be filtered out
-            should_filter = any(keyword in final_name.lower() for keyword in self.filter_keywords)
-            if not should_filter:
-                valid_components.append({
-                    'product_id': product_id,
-                    'component_reference': component_ref,
-                    'component_name': final_name,
-                    'quantity': quantity,
-                    'level': level
-                })
-
-        # If there's exactly one valid component, check if it should be collapsed further
-        if len(valid_components) == 1:
-            component = valid_components[0]
-
-            # Check if this component has its own BOM
-            child_bom = self.get_bom_for_product(component['product_id'])
-            if child_bom:
-                # Recursively check if the child BOM should also be collapsed
-                collapsed_child = self.get_collapsed_single_child(child_bom['id'], component['quantity'], level + 1)
-                if collapsed_child:
-                    return collapsed_child
-                else:
-                    # Child BOM has multiple components, so we keep this component but mark it as having a BOM
-                    component['has_child_bom'] = True
-                    return component
-            else:
-                # No child BOM, this is a leaf component
-                component['has_child_bom'] = False
-                return component
-
-        # Multiple components or no valid components - don't collapse
-        return None
-
-    def get_bom_lines(self, bom_id: int, parent_reference: str, parent_qty: float = 1.0, level: int = 1) -> None:
-        """
-        Recursively fetch BOM lines
+        Recursively fetch BOM lines that apply to the parent product variant
 
         Args:
             bom_id: BOM ID to fetch lines from
-            parent_reference: Parent product reference for tracking hierarchy
+            parent: Product info (from get_product_info) of the product this BOM is exploded for
             parent_qty: Quantity multiplier from parent
             level: Current depth level in the BOM hierarchy (0 = main product)
         """
-        if bom_id in self.processed_boms:
+        if bom_id in self.bom_path:
             print(f"  Warning: Circular reference detected for BOM ID {bom_id}, skipping...")
             return
-        
-        self.processed_boms.add(bom_id)
-        
+
+        self.bom_path.add(bom_id)
+
+        parent_reference = parent['reference'] or parent['name']
+
         # Get BOM lines
         bom_lines = self.search_read(
             'mrp.bom.line',
             [['bom_id', '=', bom_id]],
-            ['product_id', 'product_qty', 'product_uom_id']
+            ['product_id', 'product_qty', 'product_uom_id', 'bom_product_template_attribute_value_ids']
         )
-        
+
         print(f"  -> Found {len(bom_lines)} components in BOM")
-        
+
         for line in bom_lines:
             if not line['product_id']:
                 continue
 
-            product_id = line['product_id'][0]
+            component = self.get_product_info(line['product_id'][0])
+            if not component:
+                continue
+
+            component_ref = component['reference']
+            component_name = component['name']
             quantity = line['product_qty'] * parent_qty
 
-            # Get full product details - try multiple approaches to get correct name
-            product_details = self.search_read(
-                'product.product',
-                [['id', '=', product_id]],
-                ['default_code', 'name', 'display_name', 'product_tmpl_id']
-            )
+            if not self.line_applies_to_variant(line['bom_product_template_attribute_value_ids'], parent['ptav_ids']):
+                print(f"    - {component_ref}: {component_name} [Skipped: not applicable to variant {parent['name']}]")
+                continue
 
-            # Debug specific product to understand naming
-            component_ref_temp = product_details[0]['default_code'] if product_details else ""
-            if component_ref_temp == "M00279":
-                print(f"      [DEBUG M00279] Product name: '{product_details[0]['name']}'")
-                print(f"      [DEBUG M00279] Display name: '{product_details[0]['display_name']}'")
+            print(f"    * {component_ref}: {component_name} (Qty: {quantity})")
 
-            # Also get template details to compare names
-            template_name = None
-            if product_details and product_details[0].get('product_tmpl_id'):
-                template_id = product_details[0]['product_tmpl_id'][0] if isinstance(product_details[0]['product_tmpl_id'], (list, tuple)) else product_details[0]['product_tmpl_id']
-                template_details = self.search_read(
-                    'product.template',
-                    [['id', '=', template_id]],
-                    ['name']
-                )
-                if template_details:
-                    template_name = template_details[0]['name']
+            # Check if component should be filtered out
+            should_filter = any(keyword in component_name.lower() for keyword in self.filter_keywords)
+            child_bom = self.get_bom_for_product(component['id'])
 
-            # Try to get the most accurate name
-            # Priority: template name (if different and cleaner), then product name, then display name
-            if template_name and template_name != product_details[0]['name']:
-                # Use template name if it's different (usually more accurate)
-                final_name = template_name
+            if should_filter:
+                print(f"        [Filtered out: packaging/labeling component]")
             else:
-                # Use the product name
-                final_name = product_details[0]['name']
+                # Apply quantity adjustment
+                adjusted_qty = self.adjust_quantity(quantity)
+                if quantity != adjusted_qty:
+                    print(f"        [Quantity adjusted from {quantity:.2f} to {adjusted_qty:.2f}]")
 
-            if product_details:
-                # Use blank string if no reference instead of PROD_ID
-                component_ref = product_details[0]['default_code'] or ""
-                # Use the final determined name
-                component_name = final_name
+                # Add component to data (including those with child BOMs)
+                self.bom_data.append({
+                    'level': level,
+                    'component_reference': component_ref,
+                    'component_name': component_name,
+                    'component_quantity': f"{adjusted_qty:.2f}",
+                    'parent_bom_reference': parent_reference,
+                    'parent_bom_name': parent['name'],
+                    'has_child_bom': bool(child_bom)
+                })
 
-                # Remove any ' (copy)' suffix that might be in the name
-                if component_name.endswith(' (copy)'):
-                    component_name = component_name[:-7]
+            # Recurse into the component's own BOM, exploded for the component variant
+            # (Collapsing disabled to show all BOM levels)
+            if child_bom:
+                print(f"      -> Found child BOM for {component_ref}, fetching recursively...")
+                self.get_bom_lines(child_bom['id'], component, quantity, level + 1)
 
-                print(f"    * {component_ref}: {component_name} (Qty: {quantity})")
+        self.bom_path.discard(bom_id)
 
-                # Check if component should be filtered out
-                should_filter = any(keyword in component_name.lower() for keyword in self.filter_keywords)
-
-                if should_filter:
-                    print(f"        [Filtered out: packaging/labeling component]")
-                else:
-                    # Apply quantity adjustment
-                    adjusted_qty = self.adjust_quantity(quantity)
-                    if quantity != adjusted_qty:
-                        print(f"        [Quantity adjusted from {quantity:.2f} to {adjusted_qty:.2f}]")
-
-                    # Get parent name if not cached
-                    if parent_reference not in self.parent_names:
-                        # Search for parent product to get its name
-                        parent_products = self.search_read(
-                            'product.product',
-                            [['default_code', '=', parent_reference]],
-                            ['name', 'product_tmpl_id']
-                        )
-                        if parent_products:
-                            parent_name = parent_products[0]['name']
-                            # Try to get cleaner name from template
-                            if parent_products[0].get('product_tmpl_id'):
-                                template_id = parent_products[0]['product_tmpl_id'][0] if isinstance(parent_products[0]['product_tmpl_id'], (list, tuple)) else parent_products[0]['product_tmpl_id']
-                                template_details = self.search_read(
-                                    'product.template',
-                                    [['id', '=', template_id]],
-                                    ['name']
-                                )
-                                if template_details:
-                                    parent_name = template_details[0]['name']
-                            # Remove (copy) suffix if present
-                            if parent_name.endswith(' (copy)'):
-                                parent_name = parent_name[:-7]
-                            self.parent_names[parent_reference] = parent_name
-                        else:
-                            self.parent_names[parent_reference] = parent_reference
-
-                    # Add component to data (including those with child BOMs)
-                    self.bom_data.append({
-                        'level': level,
-                        'component_reference': component_ref,
-                        'component_name': component_name,
-                        'component_quantity': f"{adjusted_qty:.2f}",
-                        'parent_bom_reference': parent_reference,
-                        'parent_bom_name': self.parent_names.get(parent_reference, parent_reference),
-                        'has_child_bom': False  # Will be updated if child BOM found
-                    })
-
-                    # Store index of this item to update has_child_bom if needed
-                    item_index = len(self.bom_data) - 1
-
-                # Check if this component has its own BOM
-                child_bom = self.get_bom_for_product(product_id)
-                if child_bom:
-                    # Normal BOM processing - update has_child_bom flag and recurse
-                    # (Collapsing disabled to show all BOM levels)
-                    if not should_filter and item_index >= 0:
-                        self.bom_data[item_index]['has_child_bom'] = True
-                    print(f"      -> Found child BOM for {component_ref}, fetching recursively...")
-                    self.get_bom_lines(child_bom['id'], component_ref if component_ref else component_name, quantity, level + 1)
-    
     def fetch_bom_recursive(self, reference: str) -> List[Dict]:
         """
         Main method to fetch BOM data recursively
-        
+
         Args:
             reference: Product internal reference to start from
-            
+
         Returns:
             List of BOM component dictionaries
         """
         print(f"\nSearching for product with reference: {reference}")
-        
+
         # Reset for new fetch
-        self.processed_boms.clear()
+        self.bom_path.clear()
         self.bom_data.clear()
-        
+
         # Find product
-        product = self.get_product_by_reference(reference)
+        found = self.get_product_by_reference(reference)
+        product = self.get_product_info(found['id']) if found else None
         if not product:
             raise Exception(f"Product with reference '{reference}' not found")
-        
+
         print(f"Found product: {product['name']} (ID: {product['id']})")
-        
+
         # Find BOM
         bom = self.get_bom_for_product(product['id'])
         if not bom:
             raise Exception(f"No active BOM found for product '{reference}'")
-        
+
         print(f"Found BOM (ID: {bom['id']})")
-        
-        # Cache the main product name
-        self.parent_names[reference] = product['name']
 
         # Add the main product to the BOM data (level 0)
         self.bom_data.append({
@@ -441,10 +333,10 @@ class OdooBOMFetcher:
 
         # Fetch BOM lines recursively
         print("\nFetching BOM structure recursively...")
-        self.get_bom_lines(bom['id'], reference, 1.0, 1)
-        
+        self.get_bom_lines(bom['id'], product, 1.0, 1)
+
         return self.bom_data
-    
+
     def export_to_csv(self, data: List[Dict], filename: str) -> None:
         """
         Export BOM data to CSV file
